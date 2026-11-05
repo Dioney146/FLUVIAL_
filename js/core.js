@@ -548,70 +548,90 @@ export function analisar(pedidos, portos, opts = {}) {
     });
   }
 
-  // Herança entre pedidos do mesmo cliente/cidade (pedido desmembrado sem OBS)
-  const grupos = new Map();
-  for (const l of linhas) {
-    const k = `${l.codcli}|${chave(l.cidade)}`;
-    if (!grupos.has(k)) grupos.set(k, []);
-    grupos.get(k).push(l);
-  }
-
+  // ---- 1ª passada: cada pedido com as próprias informações (OBS ou ajuste manual)
   for (const l of linhas) {
     const aj = ajustes.get(Number(l.numped));
-    const motivos = [];
-    let emb = l.emb_auto, data = l.data_auto, herdado = null;
-
-    if (!emb || !data) {
-      const irmaos = grupos.get(`${l.codcli}|${chave(l.cidade)}`).filter((x) => x !== l);
-      for (const i of irmaos) {
-        const ai = ajustes.get(Number(i.numped));
-        const iEmb = ai?.embarcacao || i.emb_auto;
-        const iData = ai?.data_prevista || i.data_auto;
-        if ((!emb && iEmb) || (!data && iData)) {
-          if (!emb && iEmb) emb = iEmb;
-          if (!data && iData) data = iData;
-          herdado = i.numped;
-          break;
-        }
-      }
-    }
-    let origem = 'obs';
+    let emb = l.emb_auto, data = l.data_auto, origem = 'obs';
     if (aj && (aj.embarcacao || aj.data_prevista)) {
       if (aj.embarcacao) emb = aj.embarcacao;
       if (aj.data_prevista) data = aj.data_prevista;
       origem = 'manual';
     }
-
-    if (origem !== 'manual' || !aj.embarcacao) {
-      if (herdado && emb && !l.emb_auto && !aj?.embarcacao) motivos.push(`embarcação herdada do pedido ${herdado}`);
-      else if (l.emb_generica && emb === l.emb_auto) motivos.push(emb === GENERICA ? 'vendedor pediu "barco da vez"' : `vendedor pediu "barco para ${emb.replace('BARCO P/ ', '')}"`);
-      else if (l.emb_opcoes > 1 && !aj?.embarcacao) motivos.push('mais de uma embarcação citada');
-      else if (l.emb_deduzida && emb === l.emb_auto) motivos.push('nome da embarcação deduzido (escrito sem "barco")');
-    }
-    if (origem !== 'manual' || !aj.data_prevista) {
-      if (herdado && data && !l.data_auto && !aj?.data_prevista) motivos.push(`data herdada do pedido ${herdado}`);
-      else if (l.data_inferida && data === l.data_auto) motivos.push(`data deduzida de "${l.data_origem}"`);
-    }
-    if (l.carga === SEM_CARGA) motivos.push('município sem carga definida');
-
-    const generica = l.emb_generica && emb === l.emb_auto && !aj?.embarcacao;
-    let status;
-    if (!emb && !data) status = l.tem_obs ? STATUS.OBS_SEM : STATUS.SEM_OBS;
-    else if (generica) status = STATUS.VEZ;   // data não é exigida: vai no próximo barco
-    else if (!emb) status = STATUS.SEM_EMB;
-    else if (!data) status = STATUS.SEM_DATA;
-    else if (motivos.length) status = STATUS.CONFERIR;
-    else status = STATUS.COMPLETO;
-
-    l.embarcacao = emb || '';
-    l.data_prevista = data || null;
-    l.origem = origem;
-    l.herdado_de = herdado;
-    l.motivos = motivos;
-    l.status = status;
     l.ajuste_obs = aj?.observacao || '';
+    l.tem_ajuste = origem === 'manual';
+    l.juntado_com = null;
+    l.herdado_de = null;
+    definirStatus(l, emb, data, origem, aj, []);
   }
+
+  // ---- 2ª passada: pedidos do MESMO CLIENTE
+  const porCliente = new Map();
+  for (const l of linhas) {
+    const k = l.codcli != null ? String(l.codcli) : `sem-cod-${l.numped}`;
+    if (!porCliente.has(k)) porCliente.set(k, []);
+    porCliente.get(k).push(l);
+  }
+  const pontos = (x) => (x.embarcacao ? 2 : 0) + (x.data_prevista ? 2 : 0) + (x.status === STATUS.COMPLETO ? 1 : 0) + (x.tem_ajuste ? 1 : 0);
+  for (const grupo of porCliente.values()) {
+    if (grupo.length < 2) continue;
+    // fontes = pedidos do cliente que têm informação própria (OBS ou ajuste)
+    const fontes = grupo.filter((x) => (x.tem_obs || x.tem_ajuste) && (x.embarcacao || x.data_prevista)).sort((a, b) => pontos(b) - pontos(a));
+    if (!fontes.length) continue;
+    const melhor = fontes[0];
+    for (const l of grupo) {
+      if (fontes.includes(l)) {
+        // tem OBS mas falta parte da informação -> completa com outro pedido do cliente (a conferir)
+        if (l.embarcacao && l.data_prevista) continue;
+        const outro = fontes.find((f) => f !== l && ((!l.embarcacao && f.embarcacao) || (!l.data_prevista && f.data_prevista)));
+        if (!outro) continue;
+        const mot = [];
+        let emb = l.embarcacao, data = l.data_prevista;
+        if (!emb) { emb = outro.embarcacao; mot.push(`embarcação do pedido ${outro.numped} (mesmo cliente)`); }
+        if (!data) { data = outro.data_prevista; mot.push(`data do pedido ${outro.numped} (mesmo cliente)`); }
+        l.herdado_de = outro.numped;
+        definirStatus(l, emb, data, l.origem, ajustes.get(Number(l.numped)), mot);
+        continue;
+      }
+      if (l.tem_obs || l.tem_ajuste) continue;
+      // pedido SEM OBS -> junta com o pedido do mesmo cliente que tem OBS: mesma embarcação, data e situação
+      l.embarcacao = melhor.embarcacao;
+      l.data_prevista = melhor.data_prevista;
+      l.status = melhor.status;
+      l.motivos = [...melhor.motivos];
+      l.origem = melhor.origem;
+      l.juntado_com = melhor.numped;
+    }
+  }
+
+  // carga sem definição sempre aparece
+  for (const l of linhas) if (l.carga === SEM_CARGA && !l.motivos.includes('município sem carga definida')) l.motivos.push('município sem carga definida');
 
   linhas.sort((a, b) => a.carga.localeCompare(b.carga) || a.cidade.localeCompare(b.cidade) || a.numped - b.numped);
   return { linhas, naoMapeadas: [...naoMapeadas.values()] };
+}
+
+function definirStatus(l, emb, data, origem, aj, extras) {
+  const motivos = [...extras];
+  if (origem !== 'manual' || !aj?.embarcacao) {
+    if (l.emb_generica && emb === l.emb_auto) motivos.push(emb === GENERICA ? 'vendedor pediu "barco da vez"' : `vendedor pediu "barco para ${emb.replace('BARCO P/ ', '')}"`);
+    else if (l.emb_opcoes > 1 && emb === l.emb_auto) motivos.push('mais de uma embarcação citada');
+    else if (l.emb_deduzida && emb === l.emb_auto) motivos.push('nome da embarcação deduzido (escrito sem "barco")');
+  }
+  if (origem !== 'manual' || !aj?.data_prevista) {
+    if (l.data_inferida && data === l.data_auto) motivos.push(`data deduzida de "${l.data_origem}"`);
+  }
+  if (l.carga === SEM_CARGA) motivos.push('município sem carga definida');
+  const generica = l.emb_generica && emb === l.emb_auto && !aj?.embarcacao;
+  let status;
+  if (!emb && !data) status = l.tem_obs ? STATUS.OBS_SEM : STATUS.SEM_OBS;
+  else if (generica) status = STATUS.VEZ;   // data não é exigida: vai no próximo barco
+  else if (!emb) status = STATUS.SEM_EMB;
+  else if (!data) status = STATUS.SEM_DATA;
+  else if (motivos.length) status = STATUS.CONFERIR;
+  else status = STATUS.COMPLETO;
+  l.embarcacao = emb || '';
+  l.data_prevista = data || null;
+  l.origem = origem;
+  l.motivos = motivos;
+  l.status = status;
 }
