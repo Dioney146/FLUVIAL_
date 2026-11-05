@@ -59,6 +59,10 @@
             </div>
           </div>
           <div class="cartao">
+            <div class="cartao-topo"><h3>Pedidos por data de digitação</h3><span class="sub">dia em que o vendedor digitou o pedido</span></div>
+            <div id="por-digitacao"></div>
+          </div>
+          <div class="cartao">
             <div class="cartao-topo"><h3>Próximas saídas informadas</h3><span class="sub">pedidos por data e embarcação</span></div>
             <div id="proximas-saidas"></div>
           </div>
@@ -71,9 +75,14 @@
         <div class="filtros">
           <input type="search" id="f-busca" placeholder="Buscar pedido, cliente ou OBS…" />
           <select id="f-supervisor"><option value="">Todos os supervisores</option></select>
+          <select id="f-digitacao"><option value="">Qualquer data de digitação</option></select>
           <select id="f-vendedor"><option value="">Todos os vendedores</option></select>
           <select id="f-municipio"><option value="">Todos os municípios</option></select>
           <select id="f-carga"><option value="">Todas as cargas</option></select>
+          <select id="f-itens">
+            <option value="">Qualquer qtd. de itens</option>
+            <option value="muitos">Só pedidos com +60 itens</option>
+          </select>
           <select id="f-status">
             <option value="pendentes">Pendentes (sem embarcação/data)</option>
             <option value="atencao">Pendentes + a conferir</option>
@@ -104,6 +113,10 @@
             <option value="">Todos os pedidos</option>
             <option value="prontos">Só prontos (completo / a conferir)</option>
             <option value="pendentes">Só pendentes</option>
+          </select>
+          <select id="m-itens">
+            <option value="">Qualquer qtd. de itens</option>
+            <option value="muitos">Só pedidos com +60 itens</option>
           </select>
           <select id="m-agrupar">
             <option value="cidade,embarcacao,data_prevista">Município › Embarcação › Data</option>
