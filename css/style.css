@@ -183,6 +183,7 @@ main { padding: 20px 24px 60px; max-width: 1500px; margin: 0 auto; }
 .tabela tr.sel td { background: var(--rio-claro) !important; }
 .tabela .falta { color: var(--erro); font-style: italic; font-size: 12px; }
 .tabela .cli { font-weight: 500; }
+.tabela .sup { color: var(--rio); font-size: 11.5px; margin-top: 3px; font-weight: 500; }
 .tabela .menor { color: var(--tinta-3); font-size: 12px; }
 .tabela .obs { max-width: 340px; color: var(--tinta-2); font-size: 12px; line-height: 1.4; }
 .tabela .motivo { display: block; color: var(--atencao); font-size: 11.5px; margin-top: 3px; }
