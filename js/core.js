@@ -11,13 +11,15 @@ export const CARGA_DP = 'FLUVIAL-DP';
 export const SEM_CARGA = 'SEM CARGA';
 
 export const STATUS = {
-  COMPLETO: 'COMPLETO',
-  CONFERIR: 'CONFERIR',
+  SEM_OBS: 'SEM OBS',                          // vendedor não escreveu nada
+  OBS_SEM: 'OBS SEM EMBARCAÇÃO E DATA',        // escreveu algo, mas sem barco nem data
   SEM_EMB: 'SEM EMBARCAÇÃO',
   SEM_DATA: 'SEM DATA',
-  SEM_AMBOS: 'SEM EMBARCAÇÃO E DATA',
+  VEZ: 'BARCO DA VEZ',                         // "barco da vez" / "barco para município X"
+  CONFERIR: 'CONFERIR',
+  COMPLETO: 'COMPLETO',
 };
-export const STATUS_PENDENTES = [STATUS.SEM_AMBOS, STATUS.SEM_EMB, STATUS.SEM_DATA];
+export const STATUS_PENDENTES = [STATUS.SEM_OBS, STATUS.OBS_SEM, STATUS.SEM_EMB, STATUS.SEM_DATA];
 
 // Embarcações conhecidas de partida (o sistema aprende novas a cada ajuste manual)
 export const EMBARCACOES_SEED = [
@@ -201,7 +203,8 @@ const ALIAS = {
   rota: ['ROTA', 'PRACA', 'NOME ROTA'],
   valor: ['VLTOTAL', 'VALOR', 'VL TOTAL', 'VALOR TOTAL'],
   qtd_itens: ['QTD ITENS', 'QTDITENS', 'ITENS'],
-  peso: ['PESOBRUTOTOT', 'PESO', 'PESO BRUTO'],
+  peso: ['PESOBRUTOTOT', 'PESO TOTAL', 'PESO BRUTO TOTAL', 'PESO', 'PESO KG'],
+  peso_unit: ['PESOBRUTO', 'PESO BRUTO', 'PESO UNIT'],
   embarcacao_base: ['EMBARCACAO', 'BARCO', 'NOME EMBARCACAO'],
   data_base: ['DATA EMBARQUE', 'DATA PREVISTA', 'PREVISAO EMBARQUE', 'DATA ENTREGA PREVISTA', 'DT EMBARQUE'],
 };
@@ -250,13 +253,15 @@ export function lerBasePedidos(linhas) {
       rota: txt(g('rota')),
       valor: num(g('valor')) ?? 0,
       qtd_itens: num(g('qtd_itens')) ?? 0,
-      peso: num(g('peso')) ?? 0,
+      peso: num(g('peso')) || num(g('peso_unit')) || 0,
       obs: obsCols.map((i) => txt(r[i])).filter(Boolean),
       embarcacao_base: txt(g('embarcacao_base')) || null,
       data_base: toISO(parseCelulaData(g('data_base'))),
     });
   }
   if (!pedidos.length) throw new Error('A base não tem pedidos.');
+  if (idx.peso == null && idx.peso_unit == null) avisos.push('Coluna de peso não encontrada (PESOBRUTOTOT).');
+  else if (pedidos.every((p) => !p.peso)) avisos.push('A coluna de peso (PESOBRUTOTOT) veio zerada na base — o peso vai aparecer como 0 kg.');
   return { pedidos, avisos };
 }
 
@@ -308,9 +313,62 @@ function limpaNomeBarco(cap) {
   return out.join(' ').trim();
 }
 
-/** Retorna { nomes: [..], generica: bool } */
-export function extrairEmbarcacoes(texto, conhecidas = EMBARCACOES_SEED) {
-  if (!texto) return { nomes: [], generica: false };
+// palavras que nunca fazem parte de nome de barco (usado para deduzir nomes sem "BARCO X")
+const NAO_NOME = new Set([...PARADAS, 'BARCO', 'BARCOS', 'BALSA', 'LANCHA', 'NAVIO', 'FERRY', 'CLIENTE', 'PAO', 'PAES',
+  'VALIDADE', 'LONGA', 'BEM', 'AVARIADO', 'AVARIA', 'BNF', 'BONIFICACAO', 'PEDIDO', 'PEDIDOS', 'NOTA', 'NF', 'BOLETO', 'PAGAMENTO',
+  'PIX', 'DINHEIRO', 'FRETE', 'PAGO', 'CARGA', 'JUNTO', 'SEPARADO', 'COMERCIAL', 'HORARIO', 'ABRE', 'FECHA', 'LIGAR', 'CONTATO',
+  'TELEFONE', 'PRODUTO', 'PRODUTOS', 'CAIXA', 'CAIXAS', 'FRIOS', 'CONGELADO', 'CONGELADA', 'CONGELADOS', 'BATATA', 'MERCADORIA',
+  'VEZ', 'PROXIMO', 'PRIMEIRO', 'DISPONIVEL', 'QUALQUER', 'ENVIAR', 'LEVAR', 'COLOCAR', 'POR', 'PODE', 'DEIXAR', 'AGUARDAR',
+  'AGUARDANDO', 'ESPERAR', 'OBS', 'ATENCAO', 'CUIDADO', 'FRAGIL', 'O', 'A', 'OS', 'UM', 'UMA', 'SEM', 'MAIS', 'MENOS', 'SO',
+  'APENAS', 'TAMBEM', 'JA', 'AINDA', 'TODO', 'TODOS', 'TUDO', 'QUE', 'QUAL', 'QUANDO', 'SE', 'ENTRE', 'SOBRE', 'APOS', 'ANTES',
+  'DEPOIS', 'SEMANA', 'MES', 'MANHA', 'TARDE', 'NOITE', 'H', 'HS', 'HR', 'PRA', 'P', 'VENDEDOR', 'RECEBER', 'RECEBE', 'ENTREGUE',
+  'PEDIR', 'CONFIRMAR', 'VERIFICAR', 'VER', 'INTERIOR', 'FLUVIAL', 'CIDADE', 'MUNICIPIO', 'ENDERECO', 'RUA', 'AV', 'LOJA',
+  'MERCADO', 'MERCADINHO', 'COMERCIO', 'LTDA', 'ME', 'DEPOSITO', 'TRANSPORTADORA', 'BARQUEIRO', 'DONO',
+  'ITENS', 'ITEM', 'KG', 'UND', 'UN', 'FARDO', 'FARDOS', 'SACO', 'SACOS']);
+const RE_PORTO = /^(PORTO )?(DEMETRIO|ESCADARIA|RODWAY|ROADWAY|RDW|SAO RAIMUNDO|BALSA BRANCA|MANAUS MODERNA|PANAIR)( PORTO)?$/;
+
+/** "barco para Tapauá", "mandar no barco p/ Maués", "próximo barco pra Coari" -> nome da cidade (ou null) */
+function barcoParaCidade(texto, municipios) {
+  const t = String(texto).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9\/]+/g, ' ');
+  const m = t.match(/\b(?:BARCO|BARCOS|BALSA|BALSAS|LANCHA|EMBARCACAO)\b(?:\s+(?:QUE\s+)?(?:VAI|VAO|SAI|SAEM|SEGUE|FOR|ESTIVER|TIVER))?\s+(?:PARA|PRA|P\s?\/|P)\s+(?:O\s+|A\s+)?(?:MUNICIPIO\s+(?:DE\s+)?|CIDADE\s+(?:DE\s+)?)?([A-Z][A-Z ]{2,40})/);
+  if (!m) return null;
+  const palavras = m[1].trim().split(' ');
+  const cand = [];
+  for (const p of palavras) { if (PARADAS.has(p) && !['DO', 'DA', 'DE'].includes(p)) break; cand.push(p); if (cand.length >= 5) break; }
+  // tenta casar com um município conhecido (do maior trecho para o menor)
+  for (let n = cand.length; n >= 1; n--) {
+    const trecho = cand.slice(0, n).join(' ');
+    let best = null, bs = 0;
+    for (const mun of municipios || []) { const s = pontuaMunicipio(mun, trecho); if (s > bs) { bs = s; best = mun; } }
+    if (best && bs >= 1) return norm(best);
+  }
+  return cand.length ? cand.slice(0, 3).join(' ') : null;
+}
+
+/** nome de barco escrito sem "BARCO" antes: "MANOEL FONSECA/ DEMÉTRIO" -> "MANOEL FONSECA" */
+function deduzirNome(texto, municipiosChaves) {
+  const pedacos = String(texto).split(/[\/|,;()\-]+|\s(?:ou|OU|Ou|e|E)\s/);
+  for (const p of pedacos) {
+    const n = norm(p);
+    if (!n || RE_PORTO.test(n)) continue;
+    const sig = n.split(' ').filter((w) => !['DO', 'DA', 'DE', 'DOS', 'DAS', 'E'].includes(w));
+    if (sig.length < 2 || sig.length > 4) continue;
+    if (sig.some((w) => NAO_NOME.has(w) || PARADAS.has(w))) continue;
+    if (sig.some((w) => /\d/.test(w) && !/^\d$/.test(w))) continue;
+    if (sig.filter((w) => w.length >= 3).length < 2) continue;
+    if (municipiosChaves?.has(chave(n))) continue;
+    if ([...(municipiosChaves || [])].some((k) => k.length >= 5 && chave(n).includes(k))) continue;
+    return n;
+  }
+  return null;
+}
+
+/**
+ * Retorna { nomes: [..], generica: bool, rotulo: 'BARCO DA VEZ' | 'BARCO P/ X' | '', deduzida: bool }
+ * @param municipios lista de nomes de municípios (para "barco para X" e para não confundir cidade com barco)
+ */
+export function extrairEmbarcacoes(texto, conhecidas = EMBARCACOES_SEED, municipios = []) {
+  if (!texto) return { nomes: [], generica: false, rotulo: '', deduzida: false };
   const n = norm(texto);
   const semEsp = n.replace(/ /g, '');
   const achados = []; // {nome, ini, fim, k}
@@ -337,7 +395,8 @@ export function extrairEmbarcacoes(texto, conhecidas = EMBARCACOES_SEED) {
     const antes = norm(texto.slice(Math.max(0, m.index - 8), m.index));
     if (/PORTO$/.test(antes)) continue; // "PORTO BALSA BRANCA" é porto, não barco
     const capN = norm(m[2]);
-    if (/^DA VEZ\b/.test(capN)) { generica = true; continue; }
+    if (/^(DA |DE )?VEZ\b/.test(capN)) { generica = true; continue; }
+    if (/^(PARA|PRA|P)\b/.test(capN) || /^(QUE )?(VAI|SAI|SEGUE|FOR) (PARA|PRA|P)\b/.test(capN)) continue; // "barco para X" é genérico
     const nome = limpaNomeBarco(m[2]);
     const k = chave(nome);
     if (k.length < 3) continue;
@@ -346,11 +405,25 @@ export function extrairEmbarcacoes(texto, conhecidas = EMBARCACOES_SEED) {
     const nomeFinal = tipo === 'BALSA' && nome.split(' ').length === 1 ? `BALSA ${nome}` : nome; // "BALSA VERMELHA"
     achados.push({ nome: nomeFinal.toUpperCase(), ini: semEsp.indexOf(k), fim: semEsp.indexOf(k) + k.length, k: chave(nomeFinal) });
   }
-  if (/BARCO DA VEZ|PRIMEIRO BARCO|PROXIMO BARCO/.test(n)) generica = true;
+  if (/\b(BARCO|BALSA|EMBARCACAO) (DA |DE )?VEZ\b|PRIMEIRO BARCO|PROXIMO BARCO|QUALQUER BARCO|BARCO DISPONIVEL/.test(n)) generica = true;
 
   achados.sort((a, b) => a.ini - b.ini);
-  const nomes = [...new Set(achados.map((a) => a.nome))];
-  return { nomes, generica: generica && !nomes.length };
+  let nomes = [...new Set(achados.map((a) => a.nome))];
+
+  // 3) "barco para município X"
+  let rotulo = '';
+  const cidade = barcoParaCidade(texto, municipios);
+  if (cidade && !nomes.length) { generica = true; rotulo = `BARCO P/ ${cidade}`; }
+  else if (generica) rotulo = GENERICA;
+
+  // 4) nome sem a palavra "barco" ("MANOEL FONSECA/ DEMÉTRIO")
+  let deduzida = false;
+  if (!nomes.length && !generica) {
+    const chaves = new Set((municipios || []).map(chave));
+    const nome = deduzirNome(texto, chaves);
+    if (nome) { nomes = [nome]; deduzida = true; }
+  }
+  return { nomes, generica: generica && !nomes.length, rotulo: !nomes.length ? rotulo : '', deduzida };
 }
 
 const DIAS_SEMANA = { DOMINGO: 0, SEGUNDA: 1, TERCA: 2, QUARTA: 3, QUINTA: 4, SEXTA: 5, SABADO: 6 };
@@ -436,6 +509,7 @@ export function analisar(pedidos, portos, opts = {}) {
   const ajustes = opts.ajustes || new Map();
   const conhecidas = [...EMBARCACOES_SEED, ...(opts.embarcacoes || [])];
   const resolver = criarResolvedorCidade(portos || [], opts.mapeamento || new Map());
+  const municipios = [...new Set([...(portos || []).map((p) => p.municipio), ...pedidos.map((p) => p.cidade), 'MANAUS'].filter(Boolean))];
 
   const linhas = [];
   const naoMapeadas = new Map();
@@ -453,7 +527,7 @@ export function analisar(pedidos, portos, opts = {}) {
     }
 
     const texto = textoObs(p.obs);
-    const emb = p.embarcacao_base ? { nomes: [p.embarcacao_base.toUpperCase()], generica: false } : extrairEmbarcacoes(texto, conhecidas);
+    const emb = p.embarcacao_base ? { nomes: [p.embarcacao_base.toUpperCase()], generica: false, rotulo: '', deduzida: false } : extrairEmbarcacoes(texto, conhecidas, municipios);
     const dat = p.data_base ? { data: p.data_base, inferida: false, origem: 'coluna da base' } : extrairData(texto, p.data_pedido);
 
     linhas.push({
@@ -463,9 +537,11 @@ export function analisar(pedidos, portos, opts = {}) {
       municipio_planilha: r?.municipio || '',
       cidade_manual: !!r?.manual,
       obs_texto: texto,
-      emb_auto: emb.nomes.join(' / ') || (emb.generica ? GENERICA : ''),
+      emb_auto: emb.nomes.join(' / ') || (emb.generica ? emb.rotulo || GENERICA : ''),
       emb_opcoes: emb.nomes.length,
       emb_generica: emb.generica,
+      emb_deduzida: emb.deduzida,
+      tem_obs: !!texto,
       data_auto: dat.data,
       data_inferida: dat.inferida,
       data_origem: dat.origem,
@@ -508,8 +584,9 @@ export function analisar(pedidos, portos, opts = {}) {
 
     if (origem !== 'manual' || !aj.embarcacao) {
       if (herdado && emb && !l.emb_auto && !aj?.embarcacao) motivos.push(`embarcação herdada do pedido ${herdado}`);
-      else if (l.emb_generica && emb === GENERICA) motivos.push('"barco da vez" — embarcação não definida');
+      else if (l.emb_generica && emb === l.emb_auto) motivos.push(emb === GENERICA ? 'vendedor pediu "barco da vez"' : `vendedor pediu "barco para ${emb.replace('BARCO P/ ', '')}"`);
       else if (l.emb_opcoes > 1 && !aj?.embarcacao) motivos.push('mais de uma embarcação citada');
+      else if (l.emb_deduzida && emb === l.emb_auto) motivos.push('nome da embarcação deduzido (escrito sem "barco")');
     }
     if (origem !== 'manual' || !aj.data_prevista) {
       if (herdado && data && !l.data_auto && !aj?.data_prevista) motivos.push(`data herdada do pedido ${herdado}`);
@@ -517,8 +594,10 @@ export function analisar(pedidos, portos, opts = {}) {
     }
     if (l.carga === SEM_CARGA) motivos.push('município sem carga definida');
 
+    const generica = l.emb_generica && emb === l.emb_auto && !aj?.embarcacao;
     let status;
-    if (!emb && !data) status = STATUS.SEM_AMBOS;
+    if (!emb && !data) status = l.tem_obs ? STATUS.OBS_SEM : STATUS.SEM_OBS;
+    else if (generica) status = STATUS.VEZ;   // data não é exigida: vai no próximo barco
     else if (!emb) status = STATUS.SEM_EMB;
     else if (!data) status = STATUS.SEM_DATA;
     else if (motivos.length) status = STATUS.CONFERIR;
