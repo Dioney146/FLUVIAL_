@@ -29,6 +29,18 @@ const soma = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
 const unicos = (arr) => [...new Set(arr)];
 const dataHora = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 const ehPendente = (l) => STATUS_PENDENTES.includes(l.status);
+function diasDesde(iso) {
+  const d = fromISO(iso); if (!d) return '';
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const n = Math.round((hoje - d) / 86400000);
+  if (n <= 0) return '<div class="menor">hoje</div>';
+  return `<div class="menor ${n >= 3 ? 'atrasado' : ''}">há ${n} dia${n > 1 ? 's' : ''}</div>`;
+}
+const ehGenerica = (emb) => emb === 'BARCO DA VEZ' || String(emb || '').startsWith('BARCO P/');
+const LIMITE_ITENS = 60; // pedidos acima disso são destacados
+const muitosItens = (l) => (Number(l.qtd_itens) || 0) > LIMITE_ITENS;
+const kg = (v) => `${(Math.round(v || 0)).toLocaleString('pt-BR')} kg`;
+const badgeItens = (l) => (muitosItens(l) ? `<span class="badge itens" title="Pedido com mais de ${LIMITE_ITENS} itens">+${LIMITE_ITENS} ITENS</span>` : '');
 
 function toast(msg, erro = false, ms = 3500) {
   const t = $('#toast');
@@ -49,7 +61,7 @@ function cargaBadge(c) {
   return `<span class="badge ${cls}">${esc(c)}</span>`;
 }
 function statusBadge(s) {
-  const cls = s === STATUS.COMPLETO ? 'completo' : s === STATUS.CONFERIR ? 'conferir' : 'pendente';
+  const cls = s === STATUS.COMPLETO ? 'completo' : s === STATUS.CONFERIR ? 'conferir' : s === STATUS.VEZ ? 'vez' : 'pendente';
   const txt = s === STATUS.CONFERIR ? 'A CONFERIR' : s;
   return `<span class="st ${cls}">${esc(txt)}</span>`;
 }
@@ -123,11 +135,13 @@ function renderPainel() {
   const vendPend = unicos(pend.map((l) => l.vendedor));
   $('#kpis').innerHTML = [
     ['Pedidos fluviais', int(L.length), `${unicos(L.map((l) => chave(l.cidade))).length} municípios`, '', ''],
-    ['Pendentes', int(pend.length), 'sem embarcação e/ou data', 'erro', 'pendentes'],
+    ['Pendentes', int(pend.length), `${L.filter((l) => l.status === STATUS.SEM_OBS).length} sem OBS · ${L.filter((l) => l.status === STATUS.OBS_SEM).length} OBS sem info`, 'erro', 'pendentes'],
+    ['Barco da vez', int(L.filter((l) => l.status === STATUS.VEZ).length), 'ou "barco para município"', 'azul', STATUS.VEZ],
     ['A conferir', int(conf.length), 'informação deduzida', 'atencao', STATUS.CONFERIR],
     ['Completos', int(ok.length), `${L.length ? Math.round((ok.length / L.length) * 100) : 0}% do total`, 'ok', STATUS.COMPLETO],
     ['Vendedores a acionar', int(vendPend.length), 'com pedido pendente', vendPend.length ? 'erro' : 'ok', ''],
-    ['Valor fluvial', brl(soma(L, (l) => l.valor)), `${int(soma(L, (l) => l.qtd_itens))} itens`, '', ''],
+    [`Pedidos +${LIMITE_ITENS} itens`, int(L.filter(muitosItens).length), 'clique para ver', L.some(muitosItens) ? 'roxo' : '', 'itens'],
+    ['Valor fluvial', brl(soma(L, (l) => l.valor)), `${kg(soma(L, (l) => l.peso))} · ${int(soma(L, (l) => l.qtd_itens))} itens`, '', ''],
   ].map(([t, v, s, cls, f]) => `<div class="kpi ${cls}" ${f ? `data-filtro="${esc(f)}"` : ''}><span>${t}</span><strong>${v}</strong><small>${s}</small></div>`).join('');
 
   const cargas = [CARGA_RDW, CARGA_DP, ...(L.some((l) => l.carga === SEM_CARGA) ? [SEM_CARGA] : [])];
@@ -139,7 +153,11 @@ function renderPainel() {
       <dt>Municípios</dt><dd>${unicos(x.map((l) => chave(l.cidade))).length}</dd>
       <dt>Embarcações</dt><dd>${unicos(x.filter((l) => l.embarcacao).map((l) => l.embarcacao)).length}</dd>
       <dt>Valor</dt><dd>${brl(soma(x, (l) => l.valor))}</dd>
+      <dt>Peso</dt><dd>${kg(soma(x, (l) => l.peso))}</dd>
+      <dt>Itens</dt><dd>${int(soma(x, (l) => l.qtd_itens))}</dd>
+      <dt>Pedidos +${LIMITE_ITENS} itens</dt><dd style="color:var(--roxo)">${x.filter(muitosItens).length}</dd>
       <dt>Pendentes</dt><dd style="color:var(--erro)">${x.filter(ehPendente).length}</dd>
+      <dt>Barco da vez</dt><dd style="color:var(--rio)">${x.filter((l) => l.status === STATUS.VEZ).length}</dd>
       <dt>A conferir</dt><dd style="color:var(--atencao)">${x.filter((l) => l.status === STATUS.CONFERIR).length}</dd>
     </dl></div>`;
   }).join('') + '</div>';
@@ -147,7 +165,7 @@ function renderPainel() {
   // vendedores
   const porVend = new Map();
   for (const l of L) {
-    if (l.status === STATUS.COMPLETO) continue;
+    if (l.status === STATUS.COMPLETO || l.status === STATUS.VEZ) continue;
     const v = porVend.get(l.vendedor) || { vendedor: l.vendedor, p: 0, c: 0 };
     ehPendente(l) ? v.p++ : v.c++;
     porVend.set(l.vendedor, v);
@@ -163,20 +181,38 @@ function renderPainel() {
     </div>`).join('') + `</div><p class="sub" style="margin:12px 0 0"><span style="color:var(--erro)">■</span> pendentes · <span style="color:#e2a72e">■</span> a conferir</p>`
     : '<p class="sub">Nenhum vendedor a acionar. Tudo preenchido.</p>';
 
+  // por data de digitação
+  const porDig = new Map();
+  for (const l of L) {
+    const k = l.data_pedido || '';
+    const g = porDig.get(k) || { d: k, n: 0, pend: 0, vez: 0, conf: 0, ok: 0, v: 0, p: 0 };
+    g.n++; g.v += l.valor || 0; g.p += l.peso || 0;
+    if (ehPendente(l)) g.pend++; else if (l.status === STATUS.VEZ) g.vez++; else if (l.status === STATUS.CONFERIR) g.conf++; else g.ok++;
+    porDig.set(k, g);
+  }
+  const dgs = [...porDig.values()].sort((a, b) => b.d.localeCompare(a.d));
+  $('#por-digitacao').innerHTML = `<div class="tabela-wrap"><table class="tabela compacta"><thead><tr>
+      <th>Digitado em</th><th class="dir">Pedidos</th><th class="dir">Pendentes</th><th class="dir">Barco da vez</th><th class="dir">A conferir</th><th class="dir">Completos</th><th class="dir">Peso</th><th class="dir">Valor</th><th></th></tr></thead><tbody>` +
+    dgs.map((g) => `<tr><td class="num">${g.d ? fmtData(g.d) : 'Sem data'}${diasDesde(g.d)}</td><td class="dir num">${g.n}</td>
+      <td class="dir num" style="color:var(--erro)">${g.pend || ''}</td><td class="dir num" style="color:var(--rio)">${g.vez || ''}</td>
+      <td class="dir num" style="color:var(--atencao)">${g.conf || ''}</td><td class="dir num" style="color:var(--ok)">${g.ok || ''}</td>
+      <td class="dir num">${kg(g.p)}</td><td class="dir num">${brl(g.v)}</td>
+      <td class="dir"><button class="btn mini" data-ver-dig="${esc(g.d)}">Ver pedidos</button></td></tr>`).join('') + '</tbody></table></div>';
+
   // próximas saídas
   const comData = L.filter((l) => l.data_prevista && l.embarcacao);
   const grupos = new Map();
   for (const l of comData) {
     const k = `${l.data_prevista}|${l.embarcacao}|${l.carga}`;
-    const g = grupos.get(k) || { data: l.data_prevista, emb: l.embarcacao, carga: l.carga, cidades: new Set(), n: 0, v: 0, conf: 0 };
-    g.cidades.add(l.cidade); g.n++; g.v += l.valor || 0; if (l.status === STATUS.CONFERIR) g.conf++;
+    const g = grupos.get(k) || { data: l.data_prevista, emb: l.embarcacao, carga: l.carga, cidades: new Set(), n: 0, v: 0, p: 0, it: 0, conf: 0 };
+    g.cidades.add(l.cidade); g.n++; g.v += l.valor || 0; g.p += l.peso || 0; g.it += l.qtd_itens || 0; if (l.status === STATUS.CONFERIR) g.conf++;
     grupos.set(k, g);
   }
   const gs = [...grupos.values()].sort((a, b) => a.data.localeCompare(b.data) || a.emb.localeCompare(b.emb));
   $('#proximas-saidas').innerHTML = gs.length ? `<div class="tabela-wrap"><table class="tabela compacta"><thead><tr>
-      <th>Data</th><th>Embarcação</th><th>Carga</th><th>Municípios</th><th class="dir">Pedidos</th><th class="dir">Valor</th></tr></thead><tbody>` +
+      <th>Data</th><th>Embarcação</th><th>Carga</th><th>Municípios</th><th class="dir">Pedidos</th><th class="dir">Itens</th><th class="dir">Peso</th><th class="dir">Valor</th></tr></thead><tbody>` +
     gs.map((g) => `<tr><td class="num">${fmtData(g.data)}</td><td>${esc(g.emb)}${g.conf ? ` <span class="motivo" style="display:inline">· ${g.conf} a conferir</span>` : ''}</td>
-      <td>${cargaBadge(g.carga)}</td><td>${esc([...g.cidades].join(', '))}</td><td class="dir num">${g.n}</td><td class="dir num">${brl(g.v)}</td></tr>`).join('') +
+      <td>${cargaBadge(g.carga)}</td><td>${esc([...g.cidades].join(', '))}</td><td class="dir num">${g.n}</td><td class="dir num">${int(g.it)}</td><td class="dir num">${kg(g.p)}</td><td class="dir num">${brl(g.v)}</td></tr>`).join('') +
     `</tbody></table></div>` : '<p class="sub">Nenhum pedido com embarcação e data ainda.</p>';
 }
 
@@ -186,6 +222,7 @@ function renderFiltrosPend() {
   const sup = $('#f-supervisor').value;
   preencherSelect($('#f-supervisor'), unicos(L.map((l) => l.supervisor).filter(Boolean)).sort(), 'Todos os supervisores');
   preencherSelect($('#f-vendedor'), unicos(L.filter((l) => !sup || l.supervisor === sup).map((l) => l.vendedor)).sort(), 'Todos os vendedores');
+  preencherSelect($('#f-digitacao'), unicos(L.map((l) => l.data_pedido || '')).sort().reverse(), 'Qualquer data de digitação', (d) => (d ? `Digitado em ${fmtData(d)}` : 'Sem data'));
   preencherSelect($('#f-municipio'), unicos(L.map((l) => l.cidade)).sort(), 'Todos os municípios');
   preencherSelect($('#f-carga'), unicos(L.map((l) => l.carga)).sort(), 'Todas as cargas');
   const st = $('#f-status');
@@ -196,9 +233,12 @@ function renderFiltrosPend() {
 }
 function filtrarPend() {
   const busca = norm($('#f-busca').value);
-  const sp = $('#f-supervisor').value, v = $('#f-vendedor').value, m = $('#f-municipio').value, c = $('#f-carga').value, s = $('#f-status').value;
+  const dg = $('#f-digitacao').value;
+  const sp = $('#f-supervisor').value, v = $('#f-vendedor').value, m = $('#f-municipio').value, c = $('#f-carga').value, s = $('#f-status').value, it = $('#f-itens').value;
   return E.linhas.filter((l) => {
     if (sp && l.supervisor !== sp) return false;
+    if (dg && (l.data_pedido || '') !== dg) return false;
+    if (it === 'muitos' && !muitosItens(l)) return false;
     if (v && l.vendedor !== v) return false;
     if (m && l.cidade !== m) return false;
     if (c && l.carga !== c) return false;
@@ -215,9 +255,11 @@ function renderPendencias() {
   const s = $('#f-status').value;
   $('#chips-status').innerHTML = [
     ['pendentes', 'Pendentes', cont(ehPendente)],
-    [STATUS.SEM_AMBOS, 'Sem embarcação e data', cont((l) => l.status === STATUS.SEM_AMBOS)],
+    [STATUS.SEM_OBS, 'Sem OBS', cont((l) => l.status === STATUS.SEM_OBS)],
+    [STATUS.OBS_SEM, 'Com OBS, sem embarcação e data', cont((l) => l.status === STATUS.OBS_SEM)],
     [STATUS.SEM_EMB, 'Sem embarcação', cont((l) => l.status === STATUS.SEM_EMB)],
     [STATUS.SEM_DATA, 'Sem data', cont((l) => l.status === STATUS.SEM_DATA)],
+    [STATUS.VEZ, 'Barco da vez / p/ município', cont((l) => l.status === STATUS.VEZ)],
     [STATUS.CONFERIR, 'A conferir', cont((l) => l.status === STATUS.CONFERIR)],
     [STATUS.COMPLETO, 'Completos', cont((l) => l.status === STATUS.COMPLETO)],
     ['', 'Todos', L.length],
@@ -231,13 +273,15 @@ function renderPendencias() {
   } else {
     tab.innerHTML = `<thead><tr>
       <th><input type="checkbox" id="sel-todos" ${todosSel ? 'checked' : ''} /></th>
-      <th>Pedido</th><th>Cliente</th><th>Município / carga</th><th>Vendedor / supervisor</th><th>Embarcação</th><th>Data</th><th>Status</th><th>OBS do vendedor</th><th></th>
+      <th>Pedido</th><th>Digitado em</th><th>Cliente</th><th>Município / carga</th><th>Vendedor / supervisor</th><th>Embarcação</th><th>Data</th><th>Status</th><th>OBS do vendedor</th><th></th>
     </tr></thead><tbody>` + rows.map((l) => {
-      const cls = ehPendente(l) ? 'l-pendente' : l.status === STATUS.CONFERIR ? 'l-conferir' : '';
+      const cls = ehPendente(l) ? 'l-pendente' : l.status === STATUS.CONFERIR ? 'l-conferir' : l.status === STATUS.VEZ ? 'l-vez' : '';
       const man = l.origem === 'manual' ? '<span class="manual" title="Ajustado manualmente">MANUAL</span>' : '';
       return `<tr class="${cls} ${E.selecionados.has(l.numped) ? 'sel' : ''}" data-num="${l.numped}">
         <td><input type="checkbox" data-sel="${l.numped}" ${E.selecionados.has(l.numped) ? 'checked' : ''} /></td>
-        <td class="num">${l.numped}<div class="menor">${fmtData(l.data_pedido)} · ${brl(l.valor)}</div></td>
+        <td class="num">${l.numped}<div class="menor">${brl(l.valor)}</div>
+          <div class="menor ${muitosItens(l) ? 'qtd-alta' : ''}">${int(l.qtd_itens)} itens · ${kg(l.peso)}</div>${badgeItens(l)}</td>
+        <td class="num">${fmtData(l.data_pedido) || '—'}${diasDesde(l.data_pedido)}</td>
         <td><span class="cli">${esc(l.cliente)}</span><div class="menor">cód. ${esc(l.codcli ?? '')}</div></td>
         <td>${esc(l.cidade)}<div style="margin-top:3px">${cargaBadge(l.carga)}</div></td>
         <td class="menor" style="color:var(--tinta-2)">${esc(l.vendedor)}<div class="sup">Sup.: ${esc(l.supervisor) || '—'}</div></td>
@@ -263,7 +307,7 @@ function irmaosDe(l) { return E.linhas.filter((x) => x !== l && x.codcli === l.c
 
 function realcarObs(texto, l) {
   let h = esc(texto || '— sem observação —');
-  const termos = [...(l.embarcacao || '').split(' / '), l.data_origem].filter((t) => t && t.length > 2 && t !== 'BARCO DA VEZ');
+  const termos = [...(l.embarcacao || '').split(' / '), l.data_origem].filter((t) => t && t.length > 2 && !ehGenerica(t));
   for (const t of termos) {
     const padrao = [...t].map((c) => {
       const b = norm(c);
@@ -283,10 +327,10 @@ function abrirEdicao(numped) {
   E.editando = l;
   const f = $('#form-editar');
   $('#ed-titulo').textContent = `Pedido ${l.numped}`;
-  $('#ed-info').innerHTML = `<span><b>${esc(l.cliente)}</b></span><span>${esc(l.cidade)} · ${cargaBadge(l.carga)}</span><span>Vendedor: <b>${esc(l.vendedor)}</b></span><span>Supervisor: <b>${esc(l.supervisor) || '—'}</b></span><span>${brl(l.valor)} · ${l.qtd_itens} itens</span>`;
+  $('#ed-info').innerHTML = `<span><b>${esc(l.cliente)}</b></span><span>${esc(l.cidade)} · ${cargaBadge(l.carga)}</span><span>Vendedor: <b>${esc(l.vendedor)}</b></span><span>Supervisor: <b>${esc(l.supervisor) || '—'}</b></span><span>${brl(l.valor)} · ${int(l.qtd_itens)} itens · ${kg(l.peso)}</span>${badgeItens(l)}`;
   $('#ed-obs').innerHTML = realcarObs(l.obs_texto, l);
   const multipla = (l.embarcacao || '').includes(' / ');
-  f.embarcacao.value = multipla || l.embarcacao === 'BARCO DA VEZ' ? '' : l.embarcacao;
+  f.embarcacao.value = multipla || ehGenerica(l.embarcacao) ? '' : l.embarcacao;
   f.embarcacao.placeholder = multipla ? `Escolha: ${l.embarcacao}` : 'Ex.: DONA SULA';
   f.data_prevista.value = l.data_prevista || '';
   f.observacao.value = l.ajuste_obs || '';
@@ -307,7 +351,7 @@ async function salvarEdicao(e) {
   const dados = { embarcacao: f.embarcacao.value, data_prevista: f.data_prevista.value, observacao: f.observacao.value };
   if (!dados.embarcacao && !dados.data_prevista && !dados.observacao) return toast('Informe a embarcação e/ou a data.', true);
   // campo vazio mantém o valor lido da OBS (se houver)
-  if (!dados.embarcacao && l.embarcacao && !l.embarcacao.includes(' / ') && l.embarcacao !== 'BARCO DA VEZ') dados.embarcacao = l.embarcacao;
+  if (!dados.embarcacao && l.embarcacao && !l.embarcacao.includes(' / ') && !ehGenerica(l.embarcacao)) dados.embarcacao = l.embarcacao;
   if (!dados.data_prevista && l.data_prevista) dados.data_prevista = l.data_prevista;
   const alvos = [l, ...(f.cliente_todo.checked && !f.cliente_todo.closest('label').hidden ? irmaosDe(l) : [])];
   $('#modal-editar').close();
@@ -364,7 +408,9 @@ function renderMensagens() {
   const porVend = new Map();
   for (const l of rows) { if (!porVend.has(l.vendedor)) porVend.set(l.vendedor, []); porVend.get(l.vendedor).push(l); }
   const falta = (l) => {
-    if (l.status === STATUS.SEM_AMBOS) return 'falta embarcação e data de embarque';
+    if (l.status === STATUS.SEM_OBS) return 'pedido sem observação — falta embarcação e data de embarque';
+    if (l.status === STATUS.OBS_SEM) return `a OBS ("${l.obs_texto.slice(0, 60)}") não informa embarcação nem data`;
+    if (l.status === STATUS.VEZ) return `${l.embarcacao.toLowerCase()} — confirmar se pode ir no próximo barco`;
     if (l.status === STATUS.SEM_EMB) return `falta embarcação${l.data_prevista ? ` (data: ${fmtData(l.data_prevista)})` : ''}`;
     if (l.status === STATUS.SEM_DATA) return `falta data de embarque${l.embarcacao ? ` (embarcação: ${l.embarcacao})` : ''}`;
     return `confirmar: ${l.embarcacao} em ${fmtData(l.data_prevista)} — ${l.motivos.join('; ')}`;
@@ -386,10 +432,11 @@ function renderFiltrosMont() {
   preencherSelect($('#m-data'), datas, 'Todas as datas', (d) => (d === '__sem' ? 'Sem data' : fmtData(d)));
 }
 function filtrarMont() {
-  const c = $('#m-carga').value, d = $('#m-data').value, s = $('#m-status').value, b = norm($('#m-busca').value);
+  const c = $('#m-carga').value, d = $('#m-data').value, s = $('#m-status').value, b = norm($('#m-busca').value), it = $('#m-itens').value;
   return E.linhas.filter((l) => {
     if (c && l.carga !== c) return false;
     if (d && (l.data_prevista || '__sem') !== d) return false;
+    if (it === 'muitos' && !muitosItens(l)) return false;
     if (s === 'prontos' && ehPendente(l)) return false;
     if (s === 'pendentes' && !ehPendente(l)) return false;
     if (b && !norm(`${l.numped} ${l.cliente} ${l.cidade} ${l.embarcacao} ${l.vendedor} ${l.supervisor}`).includes(b)) return false;
@@ -409,9 +456,10 @@ function ordenarChave(campo, a, b) {
 function renderGrupo(rows, niveis, abrir) {
   if (!niveis.length) {
     return `<div class="pedidos-lista">` + rows.sort((a, b) => a.cliente.localeCompare(b.cliente)).map((l) => `
-      <div class="ped"><span class="num">${l.numped}</span>
+      <div class="ped"><span class="num">${l.numped}<span class="vend" style="display:block">dig. ${fmtData(l.data_pedido)}</span></span>
         <span>${esc(l.cliente)} <span class="vend">· ${esc(l.vendedor)} · Sup.: ${esc(l.supervisor) || '—'}</span></span>
-        <span class="num">${brl(l.valor)}</span>${statusBadge(l.status)}</div>`).join('') + `</div>`;
+        <span class="num ${muitosItens(l) ? 'qtd-alta' : ''}">${int(l.qtd_itens)} it.</span><span class="num">${kg(l.peso)}</span><span class="num">${brl(l.valor)}</span>
+        <span>${badgeItens(l)} ${statusBadge(l.status)}</span></div>`).join('') + `</div>`;
   }
   const [campo, ...resto] = niveis;
   const grupos = new Map();
@@ -419,9 +467,10 @@ function renderGrupo(rows, niveis, abrir) {
   return [...grupos.keys()].sort((a, b) => ordenarChave(campo, a, b)).map((k) => {
     const g = grupos.get(k);
     const pend = g.filter(ehPendente).length;
+    const muitos = g.filter(muitosItens).length;
     const extra = campo === 'embarcacao' && k.includes(' / ') ? ' <span class="alerta-mini">· escolher uma</span>' : '';
     return `<details class="grupo" ${abrir ? 'open' : ''}><summary>${esc(ROTULO[campo](k))}${extra}
-      <span class="totais"><span><b>${g.length}</b> ped.</span><span><b>${brl(soma(g, (l) => l.valor))}</b></span>${pend ? `<span class="alerta-mini">${pend} pendente(s)</span>` : ''}</span></summary>
+      <span class="totais"><span><b>${g.length}</b> ped.</span><span><b>${kg(soma(g, (l) => l.peso))}</b></span><span><b>${brl(soma(g, (l) => l.valor))}</b></span>${muitos ? `<span class="roxo-mini">${muitos} c/ +${LIMITE_ITENS} itens</span>` : ''}${pend ? `<span class="alerta-mini">${pend} pendente(s)</span>` : ''}</span></summary>
       ${renderGrupo(g, resto, false)}</details>`;
   }).join('');
 }
@@ -436,7 +485,7 @@ function renderMontagem() {
     const x = rows.filter((l) => l.carga === c);
     const cls = c === CARGA_RDW ? 'rdw' : c === CARGA_DP ? 'dp' : 'sem';
     return `<section class="col-carga ${cls}"><header><h3>${esc(c)}</h3>
-      <span class="totais"><span><b>${unicos(x.map((l) => chave(l.cidade))).length}</b> municípios</span><span><b>${x.length}</b> pedidos</span><span><b>${brl(soma(x, (l) => l.valor))}</b></span><span><b>${int(soma(x, (l) => l.qtd_itens))}</b> itens</span></span></header>
+      <span class="totais"><span><b>${unicos(x.map((l) => chave(l.cidade))).length}</b> municípios</span><span><b>${x.length}</b> pedidos</span><span><b>${brl(soma(x, (l) => l.valor))}</b></span><span><b>${int(soma(x, (l) => l.qtd_itens))}</b> itens</span><span><b>${kg(soma(x, (l) => l.peso))}</b></span>${x.some(muitosItens) ? `<span class="roxo-mini"><b>${x.filter(muitosItens).length}</b> c/ +${LIMITE_ITENS} itens</span>` : ''}</span></header>
       ${renderGrupo(x, niveis, true)}</section>`;
   }).join('');
 }
@@ -525,12 +574,12 @@ function exportar(rows, nome) {
   if (!rows.length) return toast('Nada para exportar.', true);
   const dados = rows.map((l) => ({
     'Carga': l.carga, 'Município': l.cidade, 'Porto': l.porto, 'Embarcação': l.embarcacao,
-    'Data embarque': fromISO(l.data_prevista) || '', 'Pedido': l.numped, 'Cód. cliente': l.codcli, 'Cliente': l.cliente,
-    'Vendedor': l.vendedor, 'Supervisor': l.supervisor, 'Valor': l.valor, 'Itens': l.qtd_itens, 'Status': l.status,
+    'Data embarque': fromISO(l.data_prevista) || '', 'Pedido': l.numped, 'Data do pedido': fromISO(l.data_pedido) || '', 'Cód. cliente': l.codcli, 'Cliente': l.cliente,
+    'Vendedor': l.vendedor, 'Supervisor': l.supervisor, 'Valor': l.valor, 'Itens': l.qtd_itens, 'Peso (kg)': l.peso, [`+${LIMITE_ITENS} itens`]: muitosItens(l) ? 'SIM' : '', 'Status': l.status,
     'Motivo': l.motivos.join('; '), 'Origem': l.origem === 'manual' ? 'Ajuste manual' : 'OBS do vendedor', 'OBS do vendedor': l.obs_texto,
   }));
   const ws = XLSX.utils.json_to_sheet(dados, { cellDates: true, dateNF: 'dd/mm/yyyy' });
-  ws['!cols'] = [12, 22, 18, 26, 12, 12, 10, 36, 30, 26, 11, 6, 22, 40, 14, 60].map((w) => ({ wch: w }));
+  ws['!cols'] = [12, 22, 18, 26, 12, 12, 12, 10, 36, 30, 26, 11, 6, 10, 9, 22, 40, 14, 60].map((w) => ({ wch: w }));
   ws['!autofilter'] = { ref: ws['!ref'] };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Pedidos');
@@ -545,16 +594,22 @@ function ligarEventos() {
     const t = e.target;
     const ir = t.closest('[data-ir]'); if (ir) irPara(ir.dataset.ir);
     const kpi = t.closest('.kpi[data-filtro]');
-    if (kpi) { $('#f-status').value = kpi.dataset.filtro; renderPendencias(); irPara('pendencias'); }
+    if (kpi) {
+      if (kpi.dataset.filtro === 'itens') { $('#f-itens').value = 'muitos'; $('#f-status').value = ''; }
+      else { $('#f-status').value = kpi.dataset.filtro; $('#f-itens').value = ''; }
+      renderPendencias(); irPara('pendencias');
+    }
     if (t.closest('[data-msg-todos]')) abrirMensagens();
     const mv = t.closest('[data-msg-vend]'); if (mv) abrirMensagens(mv.dataset.msgVend);
+    const vd = t.closest('[data-ver-dig]');
+    if (vd) { $('#f-digitacao').value = vd.dataset.verDig; $('#f-status').value = ''; renderPendencias(); irPara('pendencias'); }
   });
   $('#btn-recarregar').onclick = () => ocupado('Atualizando…', recarregar);
   $('#btn-sair').onclick = async () => { await store.sair(); location.reload(); };
 
   // pendências
   $('#f-supervisor').addEventListener('input', () => { renderFiltrosPend(); renderPendencias(); });
-  ['#f-busca', '#f-vendedor', '#f-municipio', '#f-carga', '#f-status'].forEach((s) => $(s).addEventListener('input', renderPendencias));
+  ['#f-busca', '#f-digitacao', '#f-itens', '#f-vendedor', '#f-municipio', '#f-carga', '#f-status'].forEach((s) => $(s).addEventListener('input', renderPendencias));
   $('#chips-status').addEventListener('click', (e) => { const c = e.target.closest('[data-chip]'); if (c) { $('#f-status').value = c.dataset.chip; renderPendencias(); } });
   $('#tabela-pend').addEventListener('click', (e) => {
     const t = e.target;
@@ -588,7 +643,7 @@ function ligarEventos() {
   });
 
   // montagem
-  ['#m-carga', '#m-data', '#m-status', '#m-agrupar', '#m-busca'].forEach((s) => $(s).addEventListener('input', renderMontagem));
+  ['#m-carga', '#m-data', '#m-status', '#m-itens', '#m-agrupar', '#m-busca'].forEach((s) => $(s).addEventListener('input', renderMontagem));
   $('#m-expandir').onclick = () => {
     const abrir = $('#m-expandir').textContent === 'Expandir tudo';
     $$('#montagem details').forEach((d) => (d.open = abrir));
