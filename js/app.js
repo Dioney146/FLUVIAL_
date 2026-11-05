@@ -29,6 +29,10 @@ const soma = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
 const unicos = (arr) => [...new Set(arr)];
 const dataHora = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 const ehPendente = (l) => STATUS_PENDENTES.includes(l.status);
+function qtdDoCliente(l) {
+  const n = E.linhas.filter((x) => x.codcli != null && x.codcli === l.codcli).length;
+  return n > 1 ? `<div class="menor">${n} pedidos</div>` : '';
+}
 function diasDesde(iso) {
   const d = fromISO(iso); if (!d) return '';
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
@@ -245,7 +249,7 @@ function filtrarPend() {
     if (s === 'pendentes' && !ehPendente(l)) return false;
     if (s === 'atencao' && l.status === STATUS.COMPLETO) return false;
     if (s && !['pendentes', 'atencao'].includes(s) && l.status !== s) return false;
-    if (busca && !norm(`${l.numped} ${l.cliente} ${l.obs_texto} ${l.embarcacao} ${l.vendedor} ${l.supervisor}`).includes(busca)) return false;
+    if (busca && !norm(`${l.numped} ${l.codcli} ${l.cliente} ${l.obs_texto} ${l.embarcacao} ${l.vendedor} ${l.supervisor}`).includes(busca)) return false;
     return true;
   });
 }
@@ -273,7 +277,7 @@ function renderPendencias() {
   } else {
     tab.innerHTML = `<thead><tr>
       <th><input type="checkbox" id="sel-todos" ${todosSel ? 'checked' : ''} /></th>
-      <th>Pedido</th><th>Digitado em</th><th>Cliente</th><th>Município / carga</th><th>Vendedor / supervisor</th><th>Embarcação</th><th>Data</th><th>Status</th><th>OBS do vendedor</th><th></th>
+      <th>Pedido</th><th>Digitado em</th><th>Cód. cliente</th><th>Cliente</th><th>Município / carga</th><th>Vendedor / supervisor</th><th>Embarcação</th><th>Data</th><th>Status</th><th>OBS do vendedor</th><th></th>
     </tr></thead><tbody>` + rows.map((l) => {
       const cls = ehPendente(l) ? 'l-pendente' : l.status === STATUS.CONFERIR ? 'l-conferir' : l.status === STATUS.VEZ ? 'l-vez' : '';
       const man = l.origem === 'manual' ? '<span class="manual" title="Ajustado manualmente">MANUAL</span>' : '';
@@ -282,13 +286,14 @@ function renderPendencias() {
         <td class="num">${l.numped}<div class="menor">${brl(l.valor)}</div>
           <div class="menor ${muitosItens(l) ? 'qtd-alta' : ''}">${int(l.qtd_itens)} itens · ${kg(l.peso)}</div>${badgeItens(l)}</td>
         <td class="num">${fmtData(l.data_pedido) || '—'}${diasDesde(l.data_pedido)}</td>
-        <td><span class="cli">${esc(l.cliente)}</span><div class="menor">cód. ${esc(l.codcli ?? '')}</div></td>
+        <td class="num">${esc(l.codcli ?? '')}${qtdDoCliente(l)}</td>
+        <td><span class="cli">${esc(l.cliente)}</span></td>
         <td>${esc(l.cidade)}<div style="margin-top:3px">${cargaBadge(l.carga)}</div></td>
         <td class="menor" style="color:var(--tinta-2)">${esc(l.vendedor)}<div class="sup">Sup.: ${esc(l.supervisor) || '—'}</div></td>
         <td>${l.embarcacao ? esc(l.embarcacao) + man : '<span class="falta">não informada</span>'}</td>
         <td class="num">${l.data_prevista ? fmtData(l.data_prevista) : '<span class="falta">não informada</span>'}</td>
         <td>${statusBadge(l.status)}${l.motivos.map((m) => `<span class="motivo">${esc(m)}</span>`).join('')}</td>
-        <td class="obs">${esc(l.obs_texto) || '<span class="menor">— sem observação —</span>'}${l.ajuste_obs ? `<div class="menor">📝 ${esc(l.ajuste_obs)}</div>` : ''}</td>
+        <td class="obs">${esc(l.obs_texto) || '<span class="menor">— sem observação —</span>'}${l.juntado_com ? `<div class="junto">🔗 junto com o pedido ${l.juntado_com} (mesmo cliente)</div>` : ''}${l.ajuste_obs ? `<div class="menor">📝 ${esc(l.ajuste_obs)}</div>` : ''}</td>
         <td class="acoes">${l.status === STATUS.CONFERIR ? `<button class="btn mini" data-confirmar="${l.numped}" title="Aceitar embarcação e data como estão">✓</button> ` : ''}<button class="btn mini" data-editar="${l.numped}">Editar</button></td>
       </tr>`;
     }).join('') + '</tbody>';
@@ -303,7 +308,7 @@ function renderLote() {
 
 // ------------------------------------------------------------------ edição
 function linhaPorNum(n) { return E.linhas.find((l) => l.numped === Number(n)); }
-function irmaosDe(l) { return E.linhas.filter((x) => x !== l && x.codcli === l.codcli && chave(x.cidade) === chave(l.cidade)); }
+function irmaosDe(l) { return E.linhas.filter((x) => x !== l && x.codcli != null && x.codcli === l.codcli); }
 
 function realcarObs(texto, l) {
   let h = esc(texto || '— sem observação —');
@@ -327,7 +332,7 @@ function abrirEdicao(numped) {
   E.editando = l;
   const f = $('#form-editar');
   $('#ed-titulo').textContent = `Pedido ${l.numped}`;
-  $('#ed-info').innerHTML = `<span><b>${esc(l.cliente)}</b></span><span>${esc(l.cidade)} · ${cargaBadge(l.carga)}</span><span>Vendedor: <b>${esc(l.vendedor)}</b></span><span>Supervisor: <b>${esc(l.supervisor) || '—'}</b></span><span>${brl(l.valor)} · ${int(l.qtd_itens)} itens · ${kg(l.peso)}</span>${badgeItens(l)}`;
+  $('#ed-info').innerHTML = `<span><b>${esc(l.cliente)}</b> · cód. ${esc(l.codcli ?? '')}</span><span>${esc(l.cidade)} · ${cargaBadge(l.carga)}</span><span>Vendedor: <b>${esc(l.vendedor)}</b></span><span>Supervisor: <b>${esc(l.supervisor) || '—'}</b></span><span>${brl(l.valor)} · ${int(l.qtd_itens)} itens · ${kg(l.peso)}</span>${badgeItens(l)}`;
   $('#ed-obs').innerHTML = realcarObs(l.obs_texto, l);
   const multipla = (l.embarcacao || '').includes(' / ');
   f.embarcacao.value = multipla || ehGenerica(l.embarcacao) ? '' : l.embarcacao;
@@ -337,7 +342,7 @@ function abrirEdicao(numped) {
   const irm = irmaosDe(l);
   f.cliente_todo.closest('label').hidden = !irm.length;
   f.cliente_todo.checked = true;
-  f.cliente_todo.nextSibling.textContent = ` Aplicar também aos outros ${irm.length} pedido(s) deste cliente na mesma cidade`;
+  f.cliente_todo.nextSibling.textContent = ` Aplicar também aos outros ${irm.length} pedido(s) deste cliente (${irm.map((x) => x.numped).join(', ')})`;
   $('#ed-remover').hidden = l.origem !== 'manual';
   $('#modal-editar').showModal();
   setTimeout(() => f.embarcacao.focus(), 50);
@@ -363,7 +368,11 @@ async function salvarEdicao(e) {
 }
 
 async function confirmar(nums) {
-  const alvos = nums.map(linhaPorNum).filter(Boolean);
+  // confirmar um pedido "juntado" confirma também o pedido de origem (e vice-versa)
+  const set = new Set(nums.map(Number));
+  for (const n of [...set]) { const l = linhaPorNum(n); if (l?.juntado_com) set.add(l.juntado_com); }
+  for (const l of E.linhas) if (l.juntado_com && set.has(l.juntado_com)) set.add(l.numped);
+  const alvos = [...set].map(linhaPorNum).filter(Boolean);
   const multiplas = alvos.filter((l) => (l.embarcacao || '').includes(' / '));
   if (multiplas.length === 1 && alvos.length === 1) return abrirEdicao(multiplas[0].numped);
   const validos = alvos.filter((l) => l.embarcacao && l.data_prevista && !l.embarcacao.includes(' / '));
@@ -439,7 +448,7 @@ function filtrarMont() {
     if (it === 'muitos' && !muitosItens(l)) return false;
     if (s === 'prontos' && ehPendente(l)) return false;
     if (s === 'pendentes' && !ehPendente(l)) return false;
-    if (b && !norm(`${l.numped} ${l.cliente} ${l.cidade} ${l.embarcacao} ${l.vendedor} ${l.supervisor}`).includes(b)) return false;
+    if (b && !norm(`${l.numped} ${l.codcli} ${l.cliente} ${l.cidade} ${l.embarcacao} ${l.vendedor} ${l.supervisor}`).includes(b)) return false;
     return true;
   });
 }
@@ -457,7 +466,7 @@ function renderGrupo(rows, niveis, abrir) {
   if (!niveis.length) {
     return `<div class="pedidos-lista">` + rows.sort((a, b) => a.cliente.localeCompare(b.cliente)).map((l) => `
       <div class="ped"><span class="num">${l.numped}<span class="vend" style="display:block">dig. ${fmtData(l.data_pedido)}</span></span>
-        <span>${esc(l.cliente)} <span class="vend">· ${esc(l.vendedor)} · Sup.: ${esc(l.supervisor) || '—'}</span></span>
+        <span><span class="vend">${esc(l.codcli ?? '')}</span> ${esc(l.cliente)}${l.juntado_com ? ' <span class="vend">🔗</span>' : ''} <span class="vend">· ${esc(l.vendedor)} · Sup.: ${esc(l.supervisor) || '—'}</span></span>
         <span class="num ${muitosItens(l) ? 'qtd-alta' : ''}">${int(l.qtd_itens)} it.</span><span class="num">${kg(l.peso)}</span><span class="num">${brl(l.valor)}</span>
         <span>${badgeItens(l)} ${statusBadge(l.status)}</span></div>`).join('') + `</div>`;
   }
