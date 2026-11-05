@@ -183,7 +183,9 @@ function renderPainel() {
 // ================================================================== PENDÊNCIAS
 function renderFiltrosPend() {
   const L = E.linhas;
-  preencherSelect($('#f-vendedor'), unicos(L.map((l) => l.vendedor)).sort(), 'Todos os vendedores');
+  const sup = $('#f-supervisor').value;
+  preencherSelect($('#f-supervisor'), unicos(L.map((l) => l.supervisor).filter(Boolean)).sort(), 'Todos os supervisores');
+  preencherSelect($('#f-vendedor'), unicos(L.filter((l) => !sup || l.supervisor === sup).map((l) => l.vendedor)).sort(), 'Todos os vendedores');
   preencherSelect($('#f-municipio'), unicos(L.map((l) => l.cidade)).sort(), 'Todos os municípios');
   preencherSelect($('#f-carga'), unicos(L.map((l) => l.carga)).sort(), 'Todas as cargas');
   const st = $('#f-status');
@@ -194,15 +196,16 @@ function renderFiltrosPend() {
 }
 function filtrarPend() {
   const busca = norm($('#f-busca').value);
-  const v = $('#f-vendedor').value, m = $('#f-municipio').value, c = $('#f-carga').value, s = $('#f-status').value;
+  const sp = $('#f-supervisor').value, v = $('#f-vendedor').value, m = $('#f-municipio').value, c = $('#f-carga').value, s = $('#f-status').value;
   return E.linhas.filter((l) => {
+    if (sp && l.supervisor !== sp) return false;
     if (v && l.vendedor !== v) return false;
     if (m && l.cidade !== m) return false;
     if (c && l.carga !== c) return false;
     if (s === 'pendentes' && !ehPendente(l)) return false;
     if (s === 'atencao' && l.status === STATUS.COMPLETO) return false;
     if (s && !['pendentes', 'atencao'].includes(s) && l.status !== s) return false;
-    if (busca && !norm(`${l.numped} ${l.cliente} ${l.obs_texto} ${l.embarcacao}`).includes(busca)) return false;
+    if (busca && !norm(`${l.numped} ${l.cliente} ${l.obs_texto} ${l.embarcacao} ${l.vendedor} ${l.supervisor}`).includes(busca)) return false;
     return true;
   });
 }
@@ -228,7 +231,7 @@ function renderPendencias() {
   } else {
     tab.innerHTML = `<thead><tr>
       <th><input type="checkbox" id="sel-todos" ${todosSel ? 'checked' : ''} /></th>
-      <th>Pedido</th><th>Cliente</th><th>Município / carga</th><th>Vendedor</th><th>Embarcação</th><th>Data</th><th>Status</th><th>OBS do vendedor</th><th></th>
+      <th>Pedido</th><th>Cliente</th><th>Município / carga</th><th>Vendedor / supervisor</th><th>Embarcação</th><th>Data</th><th>Status</th><th>OBS do vendedor</th><th></th>
     </tr></thead><tbody>` + rows.map((l) => {
       const cls = ehPendente(l) ? 'l-pendente' : l.status === STATUS.CONFERIR ? 'l-conferir' : '';
       const man = l.origem === 'manual' ? '<span class="manual" title="Ajustado manualmente">MANUAL</span>' : '';
@@ -237,7 +240,7 @@ function renderPendencias() {
         <td class="num">${l.numped}<div class="menor">${fmtData(l.data_pedido)} · ${brl(l.valor)}</div></td>
         <td><span class="cli">${esc(l.cliente)}</span><div class="menor">cód. ${esc(l.codcli ?? '')}</div></td>
         <td>${esc(l.cidade)}<div style="margin-top:3px">${cargaBadge(l.carga)}</div></td>
-        <td class="menor" style="color:var(--tinta-2)">${esc(l.vendedor)}</td>
+        <td class="menor" style="color:var(--tinta-2)">${esc(l.vendedor)}<div class="sup">Sup.: ${esc(l.supervisor) || '—'}</div></td>
         <td>${l.embarcacao ? esc(l.embarcacao) + man : '<span class="falta">não informada</span>'}</td>
         <td class="num">${l.data_prevista ? fmtData(l.data_prevista) : '<span class="falta">não informada</span>'}</td>
         <td>${statusBadge(l.status)}${l.motivos.map((m) => `<span class="motivo">${esc(m)}</span>`).join('')}</td>
@@ -280,7 +283,7 @@ function abrirEdicao(numped) {
   E.editando = l;
   const f = $('#form-editar');
   $('#ed-titulo').textContent = `Pedido ${l.numped}`;
-  $('#ed-info').innerHTML = `<span><b>${esc(l.cliente)}</b></span><span>${esc(l.cidade)} · ${cargaBadge(l.carga)}</span><span>Vendedor: <b>${esc(l.vendedor)}</b></span><span>${brl(l.valor)} · ${l.qtd_itens} itens</span>`;
+  $('#ed-info').innerHTML = `<span><b>${esc(l.cliente)}</b></span><span>${esc(l.cidade)} · ${cargaBadge(l.carga)}</span><span>Vendedor: <b>${esc(l.vendedor)}</b></span><span>Supervisor: <b>${esc(l.supervisor) || '—'}</b></span><span>${brl(l.valor)} · ${l.qtd_itens} itens</span>`;
   $('#ed-obs').innerHTML = realcarObs(l.obs_texto, l);
   const multipla = (l.embarcacao || '').includes(' / ');
   f.embarcacao.value = multipla || l.embarcacao === 'BARCO DA VEZ' ? '' : l.embarcacao;
@@ -356,7 +359,8 @@ function abrirMensagens(vendedor = null) {
 }
 function renderMensagens() {
   const incluiConf = $('#msg-conferir').checked;
-  const rows = E.linhas.filter((l) => (ehPendente(l) || (incluiConf && l.status === STATUS.CONFERIR)) && (!E.msgVendedor || l.vendedor === E.msgVendedor));
+  const sup = $('#f-supervisor').value;
+  const rows = E.linhas.filter((l) => (ehPendente(l) || (incluiConf && l.status === STATUS.CONFERIR)) && (!E.msgVendedor || l.vendedor === E.msgVendedor) && (E.msgVendedor || !sup || l.supervisor === sup));
   const porVend = new Map();
   for (const l of rows) { if (!porVend.has(l.vendedor)) porVend.set(l.vendedor, []); porVend.get(l.vendedor).push(l); }
   const falta = (l) => {
@@ -369,7 +373,7 @@ function renderMensagens() {
     const txt = `Olá! Pedidos para o interior (transporte fluvial) que precisam de informação para a roteirização:\n\n` +
       ls.map((l) => `• Ped. ${l.numped} — ${l.cliente} (${l.cidade}): ${falta(l)}`).join('\n') +
       `\n\nPor favor, informe o *nome da embarcação* e a *data de embarque* de cada pedido. Obrigado!`;
-    return `<div class="msg-bloco"><header><strong>${esc(v)}</strong><span class="sub">${ls.length} pedido(s)</span><button class="btn mini" data-copiar>Copiar</button></header><pre>${esc(txt)}</pre></div>`;
+    return `<div class="msg-bloco"><header><strong>${esc(v)}<span class="sub" style="display:block;font-weight:400">Supervisor: ${esc(ls[0].supervisor) || '—'}</span></strong><span class="sub">${ls.length} pedido(s)</span><button class="btn mini" data-copiar>Copiar</button></header><pre>${esc(txt)}</pre></div>`;
   });
   $('#msg-lista').innerHTML = blocos.join('') || '<p class="sub" style="margin-top:14px">Nenhuma pendência para enviar.</p>';
 }
@@ -388,7 +392,7 @@ function filtrarMont() {
     if (d && (l.data_prevista || '__sem') !== d) return false;
     if (s === 'prontos' && ehPendente(l)) return false;
     if (s === 'pendentes' && !ehPendente(l)) return false;
-    if (b && !norm(`${l.numped} ${l.cliente} ${l.cidade} ${l.embarcacao} ${l.vendedor}`).includes(b)) return false;
+    if (b && !norm(`${l.numped} ${l.cliente} ${l.cidade} ${l.embarcacao} ${l.vendedor} ${l.supervisor}`).includes(b)) return false;
     return true;
   });
 }
@@ -406,7 +410,7 @@ function renderGrupo(rows, niveis, abrir) {
   if (!niveis.length) {
     return `<div class="pedidos-lista">` + rows.sort((a, b) => a.cliente.localeCompare(b.cliente)).map((l) => `
       <div class="ped"><span class="num">${l.numped}</span>
-        <span>${esc(l.cliente)} <span class="vend">· ${esc(l.vendedor)}</span></span>
+        <span>${esc(l.cliente)} <span class="vend">· ${esc(l.vendedor)} · Sup.: ${esc(l.supervisor) || '—'}</span></span>
         <span class="num">${brl(l.valor)}</span>${statusBadge(l.status)}</div>`).join('') + `</div>`;
   }
   const [campo, ...resto] = niveis;
@@ -549,6 +553,7 @@ function ligarEventos() {
   $('#btn-sair').onclick = async () => { await store.sair(); location.reload(); };
 
   // pendências
+  $('#f-supervisor').addEventListener('input', () => { renderFiltrosPend(); renderPendencias(); });
   ['#f-busca', '#f-vendedor', '#f-municipio', '#f-carga', '#f-status'].forEach((s) => $(s).addEventListener('input', renderPendencias));
   $('#chips-status').addEventListener('click', (e) => { const c = e.target.closest('[data-chip]'); if (c) { $('#f-status').value = c.dataset.chip; renderPendencias(); } });
   $('#tabela-pend').addEventListener('click', (e) => {
