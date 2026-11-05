@@ -149,7 +149,7 @@ export async function salvarAjuste(numped, { embarcacao, data_prevista, observac
     if (error) throw new Error(error.message);
   }
   // aprende a embarcação (só nomes únicos, não listas "A / B")
-  if (reg.embarcacao && !reg.embarcacao.includes('/') && reg.embarcacao !== 'BARCO DA VEZ') await adicionarEmbarcacao(reg.embarcacao);
+  if (reg.embarcacao && !reg.embarcacao.includes('/') && reg.embarcacao !== 'BARCO DA VEZ' && !reg.embarcacao.startsWith('BARCO P/')) await adicionarEmbarcacao(reg.embarcacao);
   return reg;
 }
 export async function salvarAjustesEmLote(lista) {
