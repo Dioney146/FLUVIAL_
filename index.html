@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Controle Fluvial · Delly's</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b4f6c'/><path d='M5 20c3 0 3-2 6-2s3 2 6 2 3-2 6-2 3 2 4 2M7 15h18l-3 4H10z' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+</head>
+<body>
+  <!-- ============================== LOGIN ============================== -->
+  <section id="tela-login" class="login" hidden>
+    <form id="form-login" class="login-card">
+      <div class="marca grande"><span class="marca-icone">⛴</span><div><strong>Controle Fluvial</strong><small>Delly's · Roteirização AM</small></div></div>
+      <label>E-mail<input type="email" name="email" required autocomplete="username" /></label>
+      <label>Senha<input type="password" name="senha" required autocomplete="current-password" /></label>
+      <button class="btn primario" type="submit">Entrar</button>
+      <p class="erro" id="login-erro"></p>
+    </form>
+  </section>
+
+  <!-- ============================== APP ============================== -->
+  <div id="app" hidden>
+    <header class="topo">
+      <div class="marca"><span class="marca-icone">⛴</span><div><strong>Controle Fluvial</strong><small>Delly's · Roteirização AM</small></div></div>
+      <nav class="abas" id="abas">
+        <button data-aba="painel" class="ativa">Painel</button>
+        <button data-aba="pendencias">Pendências <span class="contador" id="cont-pend">0</span></button>
+        <button data-aba="montagem">Montagem de cargas</button>
+        <button data-aba="municipios">Municípios e embarcações <span class="contador alerta" id="cont-mun" hidden>0</span></button>
+        <button data-aba="importar">Importar bases</button>
+      </nav>
+      <div class="topo-dir">
+        <span class="modo" id="modo"></span>
+        <button class="btn fantasma" id="btn-recarregar" title="Recarregar dados">↻</button>
+        <button class="btn fantasma" id="btn-sair">Sair</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- PAINEL -->
+      <section class="aba" id="aba-painel">
+        <div class="vazio" id="painel-vazio" hidden>
+          <h2>Nenhuma base carregada</h2>
+          <p>Importe a base de pedidos e a planilha de municípios e portos para começar.</p>
+          <button class="btn primario" data-ir="importar">Importar bases</button>
+        </div>
+        <div id="painel-conteudo">
+          <div class="info-base" id="info-base"></div>
+          <div class="kpis" id="kpis"></div>
+          <div class="grade-2">
+            <div class="cartao" id="cartoes-carga"></div>
+            <div class="cartao">
+              <div class="cartao-topo"><h3>Vendedores a acionar</h3><button class="btn" data-msg-todos>Gerar mensagens</button></div>
+              <div id="tabela-vendedores"></div>
+            </div>
+          </div>
+          <div class="cartao">
+            <div class="cartao-topo"><h3>Próximas saídas informadas</h3><span class="sub">pedidos por data e embarcação</span></div>
+            <div id="proximas-saidas"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PENDÊNCIAS -->
+      <section class="aba" id="aba-pendencias" hidden>
+        <div class="chips-status" id="chips-status"></div>
+        <div class="filtros">
+          <input type="search" id="f-busca" placeholder="Buscar pedido, cliente ou OBS…" />
+          <select id="f-vendedor"><option value="">Todos os vendedores</option></select>
+          <select id="f-municipio"><option value="">Todos os municípios</option></select>
+          <select id="f-carga"><option value="">Todas as cargas</option></select>
+          <select id="f-status">
+            <option value="pendentes">Pendentes (sem embarcação/data)</option>
+            <option value="atencao">Pendentes + a conferir</option>
+            <option value="">Todos os status</option>
+          </select>
+          <div class="filtros-acoes">
+            <button class="btn" id="btn-msg">Mensagem p/ vendedores</button>
+            <button class="btn" id="btn-exp-pend">Exportar Excel</button>
+          </div>
+        </div>
+        <div class="lote" id="lote" hidden>
+          <span id="lote-qtd"></span>
+          <input list="lista-embarcacoes" id="lote-emb" placeholder="Embarcação" />
+          <input type="date" id="lote-data" />
+          <button class="btn primario" id="lote-aplicar">Aplicar aos selecionados</button>
+          <button class="btn" id="lote-confirmar">Confirmar como está</button>
+          <button class="btn fantasma" id="lote-limpar">Limpar seleção</button>
+        </div>
+        <div class="tabela-wrap"><table class="tabela" id="tabela-pend"></table></div>
+      </section>
+
+      <!-- MONTAGEM -->
+      <section class="aba" id="aba-montagem" hidden>
+        <div class="filtros">
+          <select id="m-carga"><option value="">RDW e DP</option></select>
+          <select id="m-data"><option value="">Todas as datas</option></select>
+          <select id="m-status">
+            <option value="">Todos os pedidos</option>
+            <option value="prontos">Só prontos (completo / a conferir)</option>
+            <option value="pendentes">Só pendentes</option>
+          </select>
+          <select id="m-agrupar">
+            <option value="cidade,embarcacao,data_prevista">Município › Embarcação › Data</option>
+            <option value="data_prevista,embarcacao,cidade">Data › Embarcação › Município</option>
+            <option value="embarcacao,data_prevista,cidade">Embarcação › Data › Município</option>
+          </select>
+          <input type="search" id="m-busca" placeholder="Buscar…" />
+          <div class="filtros-acoes">
+            <button class="btn" id="m-expandir">Expandir tudo</button>
+            <button class="btn" id="btn-exp-mont">Exportar Excel</button>
+          </div>
+        </div>
+        <div class="montagem" id="montagem"></div>
+      </section>
+
+      <!-- MUNICÍPIOS -->
+      <section class="aba" id="aba-municipios" hidden>
+        <div class="cartao alerta-cartao" id="nao-mapeadas-wrap" hidden>
+          <div class="cartao-topo"><h3>Cidades da rota fluvial sem carga definida</h3><span class="sub">não encontradas na planilha de portos</span></div>
+          <div id="nao-mapeadas"></div>
+        </div>
+        <div class="grade-2">
+          <div class="cartao">
+            <div class="cartao-topo"><h3>Municípios e portos</h3><span class="sub" id="portos-resumo"></span></div>
+            <div class="tabela-wrap baixa"><table class="tabela compacta" id="tabela-portos"></table></div>
+          </div>
+          <div>
+            <div class="cartao">
+              <div class="cartao-topo"><h3>Casamentos de nome</h3><span class="sub">como cada cidade da base foi reconhecida</span></div>
+              <div id="casamentos"></div>
+            </div>
+            <div class="cartao">
+              <div class="cartao-topo"><h3>Embarcações conhecidas</h3><span class="sub">usadas para ler as OBS</span></div>
+              <form class="linha-form" id="form-emb"><input name="nome" placeholder="Nova embarcação" list="lista-embarcacoes" /><button class="btn">Adicionar</button></form>
+              <div class="tags" id="embarcacoes"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- IMPORTAR -->
+      <section class="aba" id="aba-importar" hidden>
+        <div class="grade-2">
+          <label class="drop" data-tipo="pedidos">
+            <input type="file" accept=".xls,.xlsx,.xlsm,.csv" hidden />
+            <span class="drop-icone">📦</span>
+            <strong>Base de pedidos</strong>
+            <span>Arraste o arquivo ou clique (.xls / .xlsx)</span>
+            <small>Colunas usadas: NUMPED, CODCLI, NOMECLIENTE, NOMERCA, CIDADE, DATA, ROTA, VLTOTAL, OBS*, OBSENTREGA*</small>
+            <em class="drop-info" id="info-pedidos"></em>
+          </label>
+          <label class="drop" data-tipo="portos">
+            <input type="file" accept=".xls,.xlsx,.xlsm,.csv" hidden />
+            <span class="drop-icone">⚓</span>
+            <strong>Municípios e portos</strong>
+            <span>Arraste o arquivo ou clique (.xls / .xlsx)</span>
+            <small>Uma coluna por porto: PORTO RODWAY → FLUVIAL-RDW · PORTO DEMETRIO / ESCADARIA / SÃO RAIMUNDO → FLUVIAL-DP</small>
+            <em class="drop-info" id="info-portos"></em>
+          </label>
+        </div>
+        <div class="cartao">
+          <div class="cartao-topo"><h3>Histórico de importações</h3></div>
+          <div id="historico"></div>
+        </div>
+        <div class="cartao nota">
+          <h3>Como o site lê embarcação e data</h3>
+          <p>A base não tem colunas próprias para embarcação e data — o vendedor escreve nas observações (OBS, OBS1, OBS2, OBSENTREGA1–3). O site junta esses textos, ignora códigos e "HORARIO COMERCIAL" e procura:</p>
+          <ul>
+            <li><b>Embarcação</b>: nomes da lista de embarcações conhecidas e padrões como "Barco X", "Balsa X", "F B X", "N/M X". "Barco da vez" é marcado para conferência.</li>
+            <li><b>Data</b>: datas no formato dd/mm (dando preferência à data de saída/embarque, não à de chegada), "dia 10" e dias da semana ("sai terça", "3ª feira") — estas duas últimas ficam como <i>a conferir</i>.</li>
+            <li><b>Pedido desmembrado</b>: se o mesmo cliente tem outro pedido com a informação, ela é herdada e marcada para conferência.</li>
+          </ul>
+          <p>Qualquer valor pode ser corrigido na tela de Pendências. A correção fica salva e vale mesmo depois de importar uma base nova.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <datalist id="lista-embarcacoes"></datalist>
+
+  <!-- ============================== MODAIS ============================== -->
+  <dialog id="modal-editar" class="modal">
+    <form method="dialog" id="form-editar">
+      <h3 id="ed-titulo"></h3>
+      <div class="ed-info" id="ed-info"></div>
+      <div class="ed-obs" id="ed-obs"></div>
+      <div class="grade-campos">
+        <label>Embarcação<input list="lista-embarcacoes" name="embarcacao" placeholder="Ex.: DONA SULA" /></label>
+        <label>Data de embarque / entrega<input type="date" name="data_prevista" /></label>
+      </div>
+      <label>Observação interna<input name="observacao" placeholder="Opcional" /></label>
+      <label class="check"><input type="checkbox" name="cliente_todo" checked /> Aplicar também aos outros pedidos deste cliente na mesma cidade</label>
+      <div class="modal-acoes">
+        <button type="button" class="btn fantasma perigo" id="ed-remover">Desfazer ajuste</button>
+        <span></span>
+        <button type="button" class="btn" value="cancel" id="ed-cancelar">Cancelar</button>
+        <button class="btn primario" value="ok">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="modal-msg" class="modal largo">
+    <h3>Mensagens para os vendedores</h3>
+    <p class="sub">Uma mensagem por vendedor, pronta para colar no WhatsApp.</p>
+    <label class="check"><input type="checkbox" id="msg-conferir" /> Incluir pedidos "a conferir"</label>
+    <div id="msg-lista"></div>
+    <div class="modal-acoes"><span></span><button class="btn" id="msg-fechar">Fechar</button></div>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+  <div class="carregando" id="carregando" hidden><div class="spinner"></div><span id="carregando-txt">Carregando…</span></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
